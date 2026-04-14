@@ -1,8 +1,9 @@
+// controllers/classController.js
 const Class = require('../models/Class');
 
 exports.getAllClasses = async (req, res) => {
   try {
-    const classes = await Class.findAll();
+    const classes = await Class.find().sort({ level_order: 1 });
     res.json(classes);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -12,7 +13,9 @@ exports.getAllClasses = async (req, res) => {
 exports.getClassById = async (req, res) => {
   try {
     const classItem = await Class.findById(req.params.id);
-    if (!classItem) return res.status(404).json({ message: 'Classe non trouvée' });
+    if (!classItem) {
+      return res.status(404).json({ message: 'Classe non trouvée' });
+    }
     res.json(classItem);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -22,9 +25,14 @@ exports.getClassById = async (req, res) => {
 exports.createClass = async (req, res) => {
   try {
     const { name, level_order, fees } = req.body;
-    if (!name || level_order === undefined) return res.status(400).json({ message: 'Nom et ordre requis' });
-    const newClass = await Class.create({ name, level_order, fees });
-    res.status(201).json(newClass);
+    
+    if (!name || level_order === undefined) {
+      return res.status(400).json({ message: 'Nom et ordre requis' });
+    }
+    
+    const classItem = new Class({ name, level_order, fees });
+    await classItem.save();
+    res.status(201).json(classItem);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -32,9 +40,16 @@ exports.createClass = async (req, res) => {
 
 exports.updateClass = async (req, res) => {
   try {
-    const updated = await Class.update(req.params.id, req.body);
-    if (!updated) return res.status(404).json({ message: 'Classe non trouvée' });
-    res.json(updated);
+    const classItem = await Class.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true }
+    );
+    
+    if (!classItem) {
+      return res.status(404).json({ message: 'Classe non trouvée' });
+    }
+    res.json(classItem);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -42,7 +57,7 @@ exports.updateClass = async (req, res) => {
 
 exports.deleteClass = async (req, res) => {
   try {
-    await Class.delete(req.params.id);
+    await Class.findByIdAndDelete(req.params.id);
     res.json({ message: 'Classe supprimée' });
   } catch (err) {
     res.status(500).json({ message: err.message });

@@ -1,9 +1,13 @@
+// controllers/studentController.js
 const Student = require('../models/Student');
-const { query } = require('../config/db');
+const Enrollment = require('../models/Enrollment');
+const Grade = require('../models/Grade');
+const Absence = require('../models/Absence');
+const Payment = require('../models/Payment');
 
 exports.getAllStudents = async (req, res) => {
   try {
-    const students = await Student.findAll();
+    const students = await Student.find().sort({ last_name: 1, first_name: 1 });
     res.json(students);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -13,7 +17,9 @@ exports.getAllStudents = async (req, res) => {
 exports.getStudentById = async (req, res) => {
   try {
     const student = await Student.findById(req.params.id);
-    if (!student) return res.status(404).json({ message: 'Élève non trouvé' });
+    if (!student) {
+      return res.status(404).json({ message: 'Élève non trouvé' });
+    }
     res.json(student);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -23,9 +29,23 @@ exports.getStudentById = async (req, res) => {
 exports.createStudent = async (req, res) => {
   try {
     const { first_name, last_name, birth_date, photo_url, parent_phone, parent_email, address } = req.body;
-    if (!first_name || !last_name) return res.status(400).json({ message: 'Prénom et nom requis' });
-    const newStudent = await Student.create({ first_name, last_name, birth_date, photo_url, parent_phone, parent_email, address });
-    res.status(201).json(newStudent);
+    
+    if (!first_name || !last_name) {
+      return res.status(400).json({ message: 'Prénom et nom requis' });
+    }
+    
+    const student = new Student({
+      first_name,
+      last_name,
+      birth_date,
+      photo_url,
+      parent_phone,
+      parent_email,
+      address
+    });
+    
+    await student.save();
+    res.status(201).json(student);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -33,9 +53,17 @@ exports.createStudent = async (req, res) => {
 
 exports.updateStudent = async (req, res) => {
   try {
-    const updated = await Student.update(req.params.id, req.body);
-    if (!updated) return res.status(404).json({ message: 'Élève non trouvé' });
-    res.json(updated);
+    const student = await Student.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true }
+    );
+    
+    if (!student) {
+      return res.status(404).json({ message: 'Élève non trouvé' });
+    }
+    
+    res.json(student);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -43,7 +71,7 @@ exports.updateStudent = async (req, res) => {
 
 exports.deleteStudent = async (req, res) => {
   try {
-    await Student.delete(req.params.id);
+    await Student.findByIdAndDelete(req.params.id);
     res.json({ message: 'Élève supprimé' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -52,59 +80,59 @@ exports.deleteStudent = async (req, res) => {
 
 exports.getFullStudentData = async (req, res) => {
   try {
-    const studentId = req.params.id;
-    const student = await Student.findById(studentId);
-    if (!student) return res.status(404).json({ message: 'Élève non trouvé' });
+    const student = await Student.findById(req.params.id);
+    if (!student) {
+      return res.status(404).json({ message: 'Élève non trouvé' });
+    }
 
-    const { rows: enrollments } = await query(`
-      SELECT e.*, c.name as class_name, y.label as year_label, y.id as year_id
-      FROM enrollments e
-      JOIN classes c ON e.class_id = c.id
-      JOIN years y ON e.year_id = y.id
-      WHERE e.student_id = ?
-      ORDER BY y.start_date DESC
-    `, [studentId]);
+    const enrollments = await Enrollment.find({ student_id: student._id })
+      .populate('class_id', 'name')
+      .populate('year_id', 'label start_date')
+      .sort({ 'year_id.start_date': -1 });
 
-    const { rows: grades } = await query(`
-      SELECT g.*, sub.name as subject_name, p.name as period_name, y.label as year_label
-      FROM grades g
-      JOIN subjects sub ON g.subject_id = sub.id
-      JOIN periods p ON g.period_id = p.id
-      JOIN years y ON p.year_id = y.id
-      WHERE g.student_id = ?
-      ORDER BY y.start_date DESC, p.start_date, sub.name
-    `, [studentId]);
+    const grades = await Grade.find({ student_id: student._id })
+      .populate('subject_id', 'name')
+      .populate({
+        path: 'period_id',
+        populate: { path: 'year_id', select: 'label start_date' }
+      })
+      .sort({ 'period_id.year_id.start_date': -1, 'period_id.start_date': 1, 'subject_id.name': 1 });
 
-    const { rows: absences } = await query(`
-      SELECT a.*, y.label as year_label, c.name as class_name
-      FROM absences a
-      JOIN enrollments e ON a.enrollment_id = e.id
-      JOIN years y ON e.year_id = y.id
-      JOIN classes c ON e.class_id = c.id
-      WHERE e.student_id = ?
-      ORDER BY a.absence_date DESC
-    `, [studentId]);
+    const absences = await Absence.find()
+      .populate({
+        path: 'enrollment_id',
+        match: { student_id: student._id },
+        populate: [
+          { path: 'year_id', select: 'label' },
+          { path: 'class_id', select: 'name' }
+        ]
+      })
+      .sort({ absence_date: -1 });
 
-    const { rows: payments } = await query(`
-      SELECT p.*, ps.description, y.label as year_label
-      FROM payments p
-      JOIN enrollments e ON p.enrollment_id = e.id
-      JOIN years y ON e.year_id = y.id
-      LEFT JOIN payment_schedules ps ON p.schedule_id = ps.id
-      WHERE e.student_id = ?
-      ORDER BY p.payment_date DESC
-    `, [studentId]);
+    const payments = await Payment.find()
+      .populate({
+        path: 'enrollment_id',
+        match: { student_id: student._id },
+        populate: { path: 'year_id', select: 'label' }
+      })
+      .populate('schedule_id', 'description')
+      .sort({ payment_date: -1 });
 
     const yearsData = {};
+    
     for (const enrollment of enrollments) {
-      const yearLabel = enrollment.year_label;
+      const yearLabel = enrollment.year_id.label;
       yearsData[yearLabel] = {
         year_label: yearLabel,
-        class_name: enrollment.class_name,
-        enrollment_id: enrollment.id,
-        grades: grades.filter(g => g.year_label === yearLabel),
-        absences: absences.filter(a => a.year_label === yearLabel),
-        payments: payments.filter(p => p.year_label === yearLabel)
+        class_name: enrollment.class_id.name,
+        enrollment_id: enrollment._id,
+        grades: grades.filter(g => g.period_id.year_id.label === yearLabel),
+        absences: absences.filter(a => 
+          a.enrollment_id && a.enrollment_id.year_id.label === yearLabel
+        ),
+        payments: payments.filter(p => 
+          p.enrollment_id && p.enrollment_id.year_id.label === yearLabel
+        )
       };
     }
 

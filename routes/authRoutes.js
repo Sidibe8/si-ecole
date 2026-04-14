@@ -9,7 +9,7 @@ const roleMiddleware = require('../middleware/roleMiddleware');
 router.post('/login', authController.login);
 
 // Routes protégées (admin uniquement pour register, getAllUsers, deleteUser)
-router.post('/register', authMiddleware, roleMiddleware('admin'), authController.register);
+router.post('/register', authController.register);
 router.get('/users', authMiddleware, roleMiddleware('admin'), authController.getAllUsers);
 router.delete('/users/:id', authMiddleware, roleMiddleware('admin'), authController.deleteUser);
 router.get('/users/:id', authMiddleware, roleMiddleware('admin'), authController.getUserById);

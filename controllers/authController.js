@@ -1,79 +1,149 @@
+// controllers/authController.js
 const User = require('../models/User');
 const jwt = require('jsonwebtoken');
 const { jwtSecret, jwtExpire } = require('../config/auth');
-const { query } = require('../config/db');
 const bcrypt = require('bcryptjs');
 
-exports.login = async (req, res) => {
-  const { email, password } = req.body;
-  if (!email || !password) {
-    return res.status(400).json({ message: 'Email et mot de passe requis' });
-  }
-
+exports.register = async (req, res) => {
   try {
-    const user = await User.findByEmail(email);
-    if (!user) {
-      return res.status(401).json({ message: 'Identifiants invalides' });
+    const { email, password, role, nom_complet } = req.body;
+    
+    // Validation
+    if (!email || !password || !role) {
+      return res.status(400).json({ 
+        message: 'Email, mot de passe et rôle requis' 
+      });
     }
 
-    const isValid = await User.comparePassword(password, user.password);
-    if (!isValid) {
-      return res.status(401).json({ message: 'Identifiants invalides' });
+    const validRoles = ['admin', 'comptable', 'secretariat', 'parent'];
+    if (!validRoles.includes(role)) {
+      return res.status(400).json({ 
+        message: 'Rôle invalide. Rôles acceptés: ' + validRoles.join(', ') 
+      });
     }
 
-    const token = jwt.sign(
-      { id: user.id, email: user.email, role: user.role },
-      jwtSecret,
-      { expiresIn: jwtExpire }
-    );
+    // Vérifier si l'utilisateur existe déjà
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    if (existingUser) {
+      return res.status(409).json({ 
+        message: 'Cet email est déjà utilisé' 
+      });
+    }
 
-    delete user.password;
-    res.json({ token, user });
+    // Créer l'utilisateur
+    const user = new User({
+      email: email.toLowerCase(),
+      password,  // Sera hashé automatiquement par le middleware pre-save
+      role,
+      nom_complet: nom_complet || '',
+      bank_account: req.body.bank_account || '',
+      bank_name: req.body.bank_name || '',
+      tax_id: req.body.tax_id || ''
+    });
+
+    await user.save();
+
+    // Retourner l'utilisateur sans le mot de passe
+    const userObject = user.toObject();
+    delete userObject.password;
+
+    res.status(201).json({ 
+      message: 'Utilisateur créé avec succès',
+      user: userObject 
+    });
+    
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    console.error('Register error:', err);
+    
+    // Erreur de validation Mongoose
+    if (err.name === 'ValidationError') {
+      const errors = Object.values(err.errors).map(e => e.message);
+      return res.status(400).json({ message: 'Erreur de validation', errors });
+    }
+    
+    // Erreur de duplication
+    if (err.code === 11000) {
+      return res.status(409).json({ message: 'Cet email est déjà utilisé' });
+    }
+    
+    res.status(500).json({ 
+      message: 'Erreur serveur', 
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+    });
   }
 };
 
-exports.register = async (req, res) => {
-  const { email, password, role, nom_complet, student_id, teacher_id, bank_account, bank_name, tax_id } = req.body;
-
-  if (!email || !password || !role) {
-    return res.status(400).json({ message: 'Email, mot de passe et rôle requis' });
-  }
-
-  const validRoles = ['admin', 'comptable', 'secretariat', 'parent'];
-  if (!validRoles.includes(role)) {
-    return res.status(400).json({ message: 'Rôle invalide' });
-  }
-
+exports.login = async (req, res) => {
   try {
-    const existing = await User.findByEmail(email);
-    if (existing) {
-      return res.status(409).json({ message: 'Cet email est déjà utilisé' });
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ 
+        message: 'Email et mot de passe requis' 
+      });
     }
 
-    const newUser = await User.create({ email, password, role, nom_complet, student_id, teacher_id, bank_account, bank_name, tax_id });
-    res.status(201).json({ message: 'Utilisateur créé', user: newUser });
+    // Trouver l'utilisateur
+    const user = await User.findOne({ email: email.toLowerCase() });
+    if (!user) {
+      return res.status(401).json({ 
+        message: 'Email ou mot de passe incorrect' 
+      });
+    }
+
+    // Vérifier le mot de passe
+    const isMatch = await user.comparePassword(password);
+    if (!isMatch) {
+      return res.status(401).json({ 
+        message: 'Email ou mot de passe incorrect' 
+      });
+    }
+
+    // Créer le token
+    const token = jwt.sign(
+      { 
+        id: user._id, 
+        email: user.email, 
+        role: user.role 
+      },
+      process.env.JWT_SECRET,
+      { expiresIn: process.env.JWT_EXPIRE || '7d' }
+    );
+
+    // Retourner la réponse
+    const userObject = user.toObject();
+    delete userObject.password;
+
+    res.json({
+      token,
+      user: userObject
+    });
+    
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'Erreur serveur' });
+    console.error('Login error:', err);
+    res.status(500).json({ 
+      message: 'Erreur serveur', 
+      error: process.env.NODE_ENV === 'development' ? err.message : undefined 
+    });
   }
 };
 
 exports.getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
-    if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    const user = await User.findById(req.user.id).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    }
     res.json(user);
   } catch (err) {
+    console.error('GetMe error:', err);
     res.status(500).json({ message: 'Erreur serveur' });
   }
 };
 
 exports.getAllUsers = async (req, res) => {
   try {
-    const users = await User.findAll();
+    const users = await User.find().select('-password').sort({ createdAt: -1 });
     res.json(users);
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' });
@@ -82,8 +152,10 @@ exports.getAllUsers = async (req, res) => {
 
 exports.getUserById = async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
-    if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    const user = await User.findById(req.params.id).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
+    }
     res.json(user);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -92,7 +164,7 @@ exports.getUserById = async (req, res) => {
 
 exports.deleteUser = async (req, res) => {
   try {
-    await User.delete(req.params.id);
+    await User.findByIdAndDelete(req.params.id);
     res.json({ message: 'Utilisateur supprimé' });
   } catch (err) {
     res.status(500).json({ message: 'Erreur serveur' });
@@ -101,12 +173,14 @@ exports.deleteUser = async (req, res) => {
 
 exports.updateProfile = async (req, res) => {
   try {
-    const userId = req.user.id;
     const { nom_complet } = req.body;
-    const sql = `UPDATE users SET nom_complet = COALESCE(?, nom_complet) WHERE id = ?`;
-    await query(sql, [nom_complet, userId]);
-    const { rows } = await query(`SELECT id, email, role, nom_complet FROM users WHERE id = ?`, [userId]);
-    res.json(rows[0]);
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { nom_complet },
+      { new: true }
+    ).select('-password');
+    
+    res.json(user);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -114,14 +188,17 @@ exports.updateProfile = async (req, res) => {
 
 exports.changePassword = async (req, res) => {
   try {
-    const userId = req.user.id;
     const { currentPassword, newPassword } = req.body;
-    const user = await User.findById(userId);
-    const fullUser = await User.findByEmail(user.email);
-    const isValid = await User.comparePassword(currentPassword, fullUser.password);
-    if (!isValid) return res.status(401).json({ message: 'Mot de passe actuel incorrect' });
-    const hashed = await bcrypt.hash(newPassword, 10);
-    await query('UPDATE users SET password = ? WHERE id = ?', [hashed, userId]);
+    const user = await User.findById(req.user.id);
+    
+    const isValid = await user.comparePassword(currentPassword);
+    if (!isValid) {
+      return res.status(401).json({ message: 'Mot de passe actuel incorrect' });
+    }
+    
+    user.password = newPassword;
+    await user.save();
+    
     res.json({ message: 'Mot de passe modifié' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -130,34 +207,38 @@ exports.changePassword = async (req, res) => {
 
 exports.getMyFullProfile = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ message: 'Utilisateur non trouvé' });
-
-    let extraData = {};
-    if (user.role === 'parent' && user.student_id) {
-      const { rows: students } = await query(`
-        SELECT s.*, 
-          (SELECT json_group_array(json_object('year_label', y.label, 'class_name', c.name, 'enrollment_id', e.id))
-           FROM enrollments e
-           JOIN classes c ON e.class_id = c.id
-           JOIN years y ON e.year_id = y.id
-           WHERE e.student_id = s.id) as enrollments
-        FROM students s
-        WHERE s.id = ?
-      `, [user.student_id]);
-      extraData.student = students[0];
-    } else if (['admin', 'comptable', 'secretariat'].includes(user.role)) {
-      const { rows: contracts } = await query(`
-        SELECT ac.*, y.label as year_label
-        FROM admin_contracts ac
-        JOIN years y ON ac.year_id = y.id
-        WHERE ac.user_id = ? AND y.is_current = 1
-        LIMIT 1
-      `, [userId]);
-      extraData.currentContract = contracts[0];
+    const user = await User.findById(req.user.id)
+      .select('-password')
+      .populate('student_id')
+      .populate('teacher_id');
+      
+    if (!user) {
+      return res.status(404).json({ message: 'Utilisateur non trouvé' });
     }
-
+    
+    let extraData = {};
+    
+    if (user.role === 'parent' && user.student_id) {
+      const enrollments = await Enrollment.find({ 
+        student_id: user.student_id._id 
+      })
+        .populate('class_id', 'name')
+        .populate('year_id', 'label')
+        .sort({ 'year_id.start_date': -1 });
+        
+      extraData.student = {
+        ...user.student_id.toObject(),
+        enrollments
+      };
+    } else if (['admin', 'comptable', 'secretariat'].includes(user.role)) {
+      const currentContract = await AdminContract.findOne({ 
+        user_id: user._id,
+        status: 'actif'
+      }).populate('year_id', 'label');
+      
+      extraData.currentContract = currentContract;
+    }
+    
     res.json({ user, ...extraData });
   } catch (err) {
     console.error(err);

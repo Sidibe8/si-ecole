@@ -1,9 +1,12 @@
+// controllers/teacherController.js
 const Teacher = require('../models/Teacher');
-const { query } = require('../config/db');
+const TeacherContract = require('../models/TeacherContract');
+const TeacherPayroll = require('../models/TeacherPayroll');
+const Timetable = require('../models/Timetable');
 
 exports.getAllTeachers = async (req, res) => {
   try {
-    const teachers = await Teacher.findAll();
+    const teachers = await Teacher.find().sort({ last_name: 1, first_name: 1 });
     res.json(teachers);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -13,7 +16,9 @@ exports.getAllTeachers = async (req, res) => {
 exports.getTeacherById = async (req, res) => {
   try {
     const teacher = await Teacher.findById(req.params.id);
-    if (!teacher) return res.status(404).json({ message: 'Professeur non trouvé' });
+    if (!teacher) {
+      return res.status(404).json({ message: 'Professeur non trouvé' });
+    }
     res.json(teacher);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -22,9 +27,13 @@ exports.getTeacherById = async (req, res) => {
 
 exports.createTeacher = async (req, res) => {
   try {
-    const { first_name, last_name, birth_date, phone, email, address, hire_date, status, photo_url, category, bank_account, bank_name, tax_id, social_security_number } = req.body;
-    if (!first_name || !last_name) return res.status(400).json({ message: 'Prénom et nom requis' });
-    const teacher = await Teacher.create({ first_name, last_name, birth_date, phone, email, address, hire_date, status, photo_url, category, bank_account, bank_name, tax_id, social_security_number });
+    const { first_name, last_name } = req.body;
+    if (!first_name || !last_name) {
+      return res.status(400).json({ message: 'Prénom et nom requis' });
+    }
+    
+    const teacher = new Teacher(req.body);
+    await teacher.save();
     res.status(201).json(teacher);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -33,9 +42,16 @@ exports.createTeacher = async (req, res) => {
 
 exports.updateTeacher = async (req, res) => {
   try {
-    const updated = await Teacher.update(req.params.id, req.body);
-    if (!updated) return res.status(404).json({ message: 'Professeur non trouvé' });
-    res.json(updated);
+    const teacher = await Teacher.findByIdAndUpdate(
+      req.params.id,
+      req.body,
+      { new: true }
+    );
+    
+    if (!teacher) {
+      return res.status(404).json({ message: 'Professeur non trouvé' });
+    }
+    res.json(teacher);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -43,7 +59,7 @@ exports.updateTeacher = async (req, res) => {
 
 exports.deleteTeacher = async (req, res) => {
   try {
-    await Teacher.delete(req.params.id);
+    await Teacher.findByIdAndDelete(req.params.id);
     res.json({ message: 'Professeur supprimé' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -52,35 +68,26 @@ exports.deleteTeacher = async (req, res) => {
 
 exports.getFullTeacherData = async (req, res) => {
   try {
-    const teacherId = req.params.id;
-    const teacher = await Teacher.findById(teacherId);
-    if (!teacher) return res.status(404).json({ message: 'Enseignant non trouvé' });
+    const teacher = await Teacher.findById(req.params.id);
+    if (!teacher) {
+      return res.status(404).json({ message: 'Enseignant non trouvé' });
+    }
 
-    const { rows: contracts } = await query(`
-      SELECT tc.*, y.label as year_label
-      FROM teacher_contracts tc
-      JOIN years y ON tc.year_id = y.id
-      WHERE tc.teacher_id = ?
-      ORDER BY y.start_date DESC
-    `, [teacherId]);
+    const contracts = await TeacherContract.find({ teacher_id: teacher._id })
+      .populate('year_id', 'label start_date')
+      .sort({ 'year_id.start_date': -1 });
 
-    const { rows: payrolls } = await query(`
-      SELECT tp.*, y.label as year_label, pp.month
-      FROM teacher_payroll tp
-      JOIN payroll_periods pp ON tp.payroll_period_id = pp.id
-      JOIN years y ON pp.year_id = y.id
-      WHERE tp.teacher_id = ?
-      ORDER BY y.start_date DESC, pp.month
-    `, [teacherId]);
+    const payrolls = await TeacherPayroll.find({ teacher_id: teacher._id })
+      .populate({
+        path: 'payroll_period_id',
+        populate: { path: 'year_id', select: 'label start_date' }
+      })
+      .sort({ 'payroll_period_id.year_id.start_date': -1, 'payroll_period_id.month': 1 });
 
-    const { rows: timetables } = await query(`
-      SELECT DISTINCT t.*, c.name as class_name, sub.name as subject_name
-      FROM timetables t
-      JOIN classes c ON t.class_id = c.id
-      JOIN subjects sub ON t.subject_id = sub.id
-      WHERE t.teacher_id = ?
-      ORDER BY c.name, sub.name
-    `, [teacherId]);
+    const timetables = await Timetable.find({ teacher_id: teacher._id })
+      .populate('class_id', 'name')
+      .populate('subject_id', 'name')
+      .sort({ day_of_week: 1, start_time: 1 });
 
     res.json({ teacher, contracts, payrolls, timetables });
   } catch (err) {

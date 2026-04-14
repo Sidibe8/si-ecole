@@ -1,58 +1,10 @@
-const { query } = require('../config/db');
+// models/Subject.js
+const mongoose = require('mongoose');
 
-class Subject {
-    static async findAll() {
-        const { rows } = await query(`
-            SELECT s.*, c.name as class_name
-            FROM subjects s
-            JOIN classes c ON s.class_id = c.id
-            ORDER BY c.level_order, s.name
-        `);
-        return rows;
-    }
+const subjectSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  coefficient: { type: Number, default: 1 },
+  class_id: { type: mongoose.Schema.Types.ObjectId, ref: 'Class', required: true }
+}, { timestamps: true });
 
-    static async findById(id) {
-        const { rows } = await query(`
-            SELECT s.*, c.name as class_name
-            FROM subjects s
-            JOIN classes c ON s.class_id = c.id
-            WHERE s.id = ?
-        `, [id]);
-        return rows[0];
-    }
-
-    static async findByClass(classId) {
-        const { rows } = await query(
-            `SELECT * FROM subjects WHERE class_id = ? ORDER BY name`,
-            [classId]
-        );
-        return rows;
-    }
-
-    static async create({ name, coefficient, class_id }) {
-        const sql = `INSERT INTO subjects (name, coefficient, class_id) VALUES (?, ?, ?)`;
-        const result = await query(sql, [name, coefficient, class_id]);
-        const { rows } = await query('SELECT * FROM subjects WHERE id = ?', [result.lastId]);
-        return rows[0];
-    }
-
-    static async update(id, { name, coefficient, class_id }) {
-        const sql = `
-            UPDATE subjects
-            SET name = COALESCE(?, name),
-                coefficient = COALESCE(?, coefficient),
-                class_id = COALESCE(?, class_id)
-            WHERE id = ?
-        `;
-        await query(sql, [name, coefficient, class_id, id]);
-        const { rows } = await query('SELECT * FROM subjects WHERE id = ?', [id]);
-        return rows[0];
-    }
-
-    static async delete(id) {
-        await query(`DELETE FROM subjects WHERE id = ?`, [id]);
-        return { id };
-    }
-}
-
-module.exports = Subject;
+module.exports = mongoose.model('Subject', subjectSchema);

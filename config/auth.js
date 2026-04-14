@@ -1,4 +1,5 @@
+// config/auth.js
 module.exports = {
   jwtSecret: process.env.JWT_SECRET,
-  jwtExpire: '7d',
+  jwtExpire: process.env.JWT_EXPIRE || '7d'
 };

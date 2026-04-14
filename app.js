@@ -1,3 +1,4 @@
+// app.js
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
@@ -6,8 +7,17 @@ dotenv.config();
 
 const app = express();
 
+// CORS - Accepter tout
+app.use(cors());  // <=Ça accepte toutes les origines
+
+// Ou si vous voulez être plus explicite :
+// app.use(cors({
+//   origin: '*',
+//   methods: '*',
+//   allowedHeaders: '*'
+// }));
+
 // Middlewares globaux
-app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use('/uploads', express.static('uploads'));
@@ -27,6 +37,17 @@ const teacherPayrollRoutes = require('./routes/teacherPayroll');
 const adminPayrollRoutes = require('./routes/adminPayrollRoutes');
 const absenceRoutes = require('./routes/absenceRoutes');
 const timetableRoutes = require('./routes/timetableRoutes');
+
+// Route de santé
+app.get('/api/health', (req, res) => {
+  const mongoose = require('mongoose');
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    mongodb: mongoose.connection.readyState === 1 ? 'connecté' : 'déconnecté',
+    environment: process.env.NODE_ENV || 'development'
+  });
+});
 
 // Utilisation des routes
 app.use('/api/auth', authRoutes);
@@ -51,8 +72,11 @@ app.use((req, res) => {
 
 // Middleware d'erreur global
 app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ message: 'Erreur serveur', error: err.message });
+  console.error('Erreur:', err.message);
+  res.status(500).json({ 
+    message: 'Erreur serveur', 
+    error: process.env.NODE_ENV === 'development' ? err.message : 'Erreur interne'
+  });
 });
 
 module.exports = app;

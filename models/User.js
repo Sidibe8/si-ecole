@@ -1,61 +1,59 @@
-// models/User.js
-const { query } = require('../config/db');
+// models/User.js (version alternative avec next)
+const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 
-class User {
-    static async create({ email, password, role, nom_complet, student_id = null, teacher_id = null, bank_account = null, bank_name = null, tax_id = null }) {
-        const hashedPassword = await bcrypt.hash(password, 10);
-        const sql = `
-            INSERT INTO users (email, password, role, nom_complet, student_id, teacher_id, bank_account, bank_name, tax_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `;
-        const params = [email, hashedPassword, role, nom_complet, student_id, teacher_id, bank_account, bank_name, tax_id];
-        const result = await query(sql, params);
+const userSchema = new mongoose.Schema({
+  email: { 
+    type: String, 
+    required: true, 
+    unique: true, 
+    lowercase: true,
+    trim: true
+  },
+  password: { 
+    type: String, 
+    required: true 
+  },
+  role: { 
+    type: String, 
+    enum: ['admin', 'comptable', 'secretariat', 'parent'], 
+    required: true 
+  },
+  nom_complet: String,
+  student_id: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Student' 
+  },
+  teacher_id: { 
+    type: mongoose.Schema.Types.ObjectId, 
+    ref: 'Teacher' 
+  },
+  bank_account: String,
+  bank_name: String,
+  tax_id: String
+}, { 
+  timestamps: true 
+});
 
-        // SQLite : pas de RETURNING
-        const { rows } = await query(
-            `SELECT id, email, role, nom_complet, student_id, teacher_id, bank_account, bank_name, tax_id, created_at 
-             FROM users WHERE id = ?`,
-            [result.lastId]
-        );
-        return rows[0];
+// Utiliser une fonction normale (pas arrow function) pour avoir accès à 'this'
+userSchema.pre('save', function(next) {
+  // Seulement hasher si le mot de passe est modifié
+  if (!this.isModified('password')) {
+    return next();
+  }
+  
+  bcrypt.hash(this.password, 10, (err, hash) => {
+    if (err) {
+      return next(err);
     }
+    this.password = hash;
+    next();
+  });
+});
 
-    static async findByEmail(email) {
-        const sql = `SELECT * FROM users WHERE email = ?`;
-        const { rows } = await query(sql, [email]);
-        return rows[0];
-    }
+// Méthode pour comparer les mots de passe
+userSchema.methods.comparePassword = async function(candidatePassword) {
+  return await bcrypt.compare(candidatePassword, this.password);
+};
 
-    static async findById(id) {
-        const sql = `
-            SELECT id, email, role, nom_complet, student_id, teacher_id, 
-                   bank_account, bank_name, tax_id, created_at 
-            FROM users WHERE id = ?
-        `;
-        const { rows } = await query(sql, [id]);
-        return rows[0];
-    }
-
-    static async comparePassword(plainPassword, hashedPassword) {
-        return bcrypt.compare(plainPassword, hashedPassword);
-    }
-
-    static async findAll() {
-        const sql = `
-            SELECT id, email, role, nom_complet, student_id, teacher_id, 
-                   bank_account, bank_name, tax_id, created_at 
-            FROM users ORDER BY created_at DESC
-        `;
-        const { rows } = await query(sql);
-        return rows;
-    }
-
-    static async delete(id) {
-        const sql = `DELETE FROM users WHERE id = ?`;
-        await query(sql, [id]);
-        return { id };
-    }
-}
-
-module.exports = User;
+module.exports = mongoose.model('User', userSchema);
