@@ -1,19 +1,23 @@
-// config/db.js
 const sqlite3 = require('sqlite3');
 const { open } = require('sqlite');
 const path = require('path');
 const fs = require('fs');
 
-const dbPath = process.env.DB_PATH || path.join(__dirname, '..', 'database', 'gestion_ecole.sqlite');
+// Détecter si on est sur Render (dossier persistant)
+const isRender = fs.existsSync('/opt/render/project/src/data');
+const dataDir = isRender 
+  ? '/opt/render/project/src/data' 
+  : path.join(__dirname, '..', 'database');
+
+const dbPath = path.join(dataDir, 'gestion_ecole.sqlite');
 
 let db;
 
 async function getDb() {
   if (!db) {
-    // Créer le dossier database s'il n'existe pas
-    const dbDir = path.dirname(dbPath);
-    if (!fs.existsSync(dbDir)) {
-      fs.mkdirSync(dbDir, { recursive: true });
+    // Créer le dossier s'il n'existe pas
+    if (!fs.existsSync(dataDir)) {
+      fs.mkdirSync(dataDir, { recursive: true });
     }
 
     db = await open({
@@ -24,7 +28,7 @@ async function getDb() {
     await db.run('PRAGMA foreign_keys = ON');
     await db.run('PRAGMA journal_mode = WAL');
 
-    console.log(`Base de données connectée : ${dbPath}`);
+    console.log(`📁 Base de données connectée : ${dbPath}`);
   }
   return db;
 }
@@ -54,25 +58,53 @@ async function initDatabase() {
   );
 
   if (!tableExists) {
-    console.log('Initialisation de la base de données...');
+    console.log('🔧 Initialisation de la base de données...');
     
-    const initScript = path.join(__dirname, '..', 'database', 'init.sql');
+    // Chercher init.sql dans le dossier sql/ (pas database/)
+    const initScript = path.join(__dirname, '..', 'sql', 'init.sql');
     
     if (fs.existsSync(initScript)) {
       const sql = fs.readFileSync(initScript, 'utf8');
-      await database.exec(sql);
-      console.log('Tables créées et données initiales insérées');
+      
+      // Supprimer les lignes INSERT INTO users existantes (on va les créer avec bcrypt)
+      const cleanedSql = sql.replace(/INSERT OR IGNORE INTO users.*;/gi, '');
+      
+      await database.exec(cleanedSql);
+      console.log('✅ Tables créées');
+      
+      // Créer les utilisateurs avec bcrypt
+      const bcrypt = require('bcryptjs');
+      const adminHash = await bcrypt.hash('admin123', 10);
+      const comptableHash = await bcrypt.hash('admin123', 10);
+      const secretaireHash = await bcrypt.hash('admin123', 10);
+      
+      await database.run(
+        'INSERT INTO users (email, password, role, nom_complet) VALUES (?, ?, ?, ?)',
+        ['admin@ecole.com', adminHash, 'admin', 'Administrateur']
+      );
+      await database.run(
+        'INSERT INTO users (email, password, role, nom_complet) VALUES (?, ?, ?, ?)',
+        ['comptable@ecole.com', comptableHash, 'comptable', 'Comptable']
+      );
+      await database.run(
+        'INSERT INTO users (email, password, role, nom_complet, bank_account, bank_name) VALUES (?, ?, ?, ?, ?, ?)',
+        ['secretaire@ecole.com', secretaireHash, 'secretariat', 'Secrétaire', '', '']
+      );
+      
+      console.log('✅ Utilisateurs créés (admin@ecole.com / admin123)');
     } else {
-      console.warn('Fichier init.sql non trouvé, création des tables minimale...');
+      console.warn('⚠️ Fichier init.sql non trouvé dans sql/');
       await createMinimalTables(database);
     }
   } else {
-    console.log('Base de données déjà initialisée');
+    console.log('✅ Base de données déjà initialisée');
   }
 }
 
 async function createMinimalTables(database) {
-  // Création rapide des tables essentielles si pas de init.sql
+  const bcrypt = require('bcryptjs');
+  const hash = await bcrypt.hash('admin123', 10);
+  
   await database.exec(`
     CREATE TABLE IF NOT EXISTS years (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,8 +130,10 @@ async function createMinimalTables(database) {
     );
 
     INSERT OR IGNORE INTO users (email, password, role, nom_complet)
-    VALUES ('admin@ecole.com', '$2a$10$8K1p/a0dL1LXMIgoEDFrwOfMQkf9Nq6Y0GJ5LfB7KqO1N1FqJy3Ee', 'admin', 'Administrateur');
-  `);
+    VALUES ('admin@ecole.com', ?, 'admin', 'Administrateur');
+  `, [hash]);
+  
+  console.log('✅ Tables minimales créées');
 }
 
 module.exports = { query, getDb, initDatabase };

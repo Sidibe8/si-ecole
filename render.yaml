@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: si-ecole-backend
+    env: node
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: JWT_SECRET
+        value: si_ecole_secret_key_2026
+      - key: JWT_EXPIRE
+        value: 7d
+    disk:
+      name: sqlite-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
