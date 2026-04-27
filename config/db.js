@@ -1,11 +1,13 @@
+// config/db.js
 const mongoose = require('mongoose');
 
 async function connectDB() {
   try {
-    const uri = process.env.MONGO_URI;
+    // Chercher MONGO_URI ou MONGOD_URI (faute de frappe fréquente)
+    const uri = process.env.MONGO_URI || process.env.MONGO_URI;
     
     if (!uri) {
-      throw new Error('❌ MONGO_URI non défini dans le fichier .env');
+      throw new Error('❌ MONGO_URI non défini dans les variables d\'environnement');
     }
     
     console.log('Tentative de connexion à MongoDB Atlas...');
@@ -17,11 +19,6 @@ async function connectDB() {
     });
     
     console.log('✅ MongoDB Atlas connecté avec succès');
-    
-    // Événements de connexion
-    mongoose.connection.on('connected', () => {
-      console.log('📡 Mongoose connecté');
-    });
     
     mongoose.connection.on('error', (err) => {
       console.error('❌ Erreur MongoDB:', err);
