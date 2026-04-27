@@ -9,8 +9,8 @@ exports.getAllEnrollments = async (req, res) => {
     const enrollments = await Enrollment.find()
       .populate('student_id', 'first_name last_name')
       .populate('class_id', 'name')
-      .populate('year_id', 'label')
-      .sort({ 'year_id.start_date': -1, 'student_id.last_name': 1 });
+      .populate('year_id', 'label');
+    
     res.json(enrollments);
   } catch (err) {
     res.status(500).json({ message: err.message });

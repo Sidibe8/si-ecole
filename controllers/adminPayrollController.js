@@ -2,13 +2,16 @@
 const AdminContract = require('../models/AdminContract');
 const AdminPayroll = require('../models/AdminPayroll');
 const PayrollPeriod = require('../models/PayrollPeriod');
-const pool = require('../config/db');
+const User = require('../models/User');
+const mongoose = require('mongoose');
 
 // ==================== CONTRATS ADMIN ====================
 
 exports.getAllContracts = async (req, res) => {
   try {
-    const contracts = await AdminContract.findAll();
+   const contracts = await AdminContract.find()
+      .populate('user_id', 'nom_complet role email')
+      .populate('year_id', 'label');
     res.json(contracts);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -27,7 +30,8 @@ exports.getContractById = async (req, res) => {
 
 exports.getContractsByUser = async (req, res) => {
   try {
-    const contracts = await AdminContract.findByUser(req.params.userId);
+    const contracts = await AdminContract.find({ user_id: req.params.userId })
+      .populate('year_id', 'label');
     res.json(contracts);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -41,15 +45,16 @@ exports.createContract = async (req, res) => {
       return res.status(400).json({ message: 'user_id, year_id et base_salary requis' });
     }
 
-    // Vérifier que le user existe et a un rôle admin
-    const user = await pool.query('SELECT id, role FROM users WHERE id = $1', [user_id]);
-    if (user.rows.length === 0) {
+    const user = await User.findById(user_id);
+    if (!user) {
       return res.status(404).json({ message: 'Utilisateur non trouvé' });
     }
 
-    const contract = await AdminContract.create({
+    const contract = new AdminContract({
       user_id, year_id, base_salary, contract_type, position, start_date, end_date
     });
+    await contract.save();
+    
     res.status(201).json(contract);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -58,9 +63,9 @@ exports.createContract = async (req, res) => {
 
 exports.updateContract = async (req, res) => {
   try {
-    const updated = await AdminContract.update(req.params.id, req.body);
-    if (!updated) return res.status(404).json({ message: 'Contrat non trouvé' });
-    res.json(updated);
+    const contract = await AdminContract.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!contract) return res.status(404).json({ message: 'Contrat non trouvé' });
+    res.json(contract);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -68,8 +73,8 @@ exports.updateContract = async (req, res) => {
 
 exports.deleteContract = async (req, res) => {
   try {
-    const deleted = await AdminContract.delete(req.params.id);
-    if (!deleted) return res.status(404).json({ message: 'Contrat non trouvé' });
+    const contract = await AdminContract.findByIdAndDelete(req.params.id);
+    if (!contract) return res.status(404).json({ message: 'Contrat non trouvé' });
     res.json({ message: 'Contrat supprimé' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -77,10 +82,10 @@ exports.deleteContract = async (req, res) => {
 };
 
 // ==================== PÉRIODES DE PAIE ====================
-// Utilise le même PayrollPeriod que les teachers
+
 exports.getAllPeriods = async (req, res) => {
   try {
-    const periods = await PayrollPeriod.findAll();
+    const periods = await PayrollPeriod.find().populate('year_id', 'label');
     res.json(periods);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -91,7 +96,21 @@ exports.generatePeriods = async (req, res) => {
   try {
     const { year_id } = req.body;
     if (!year_id) return res.status(400).json({ message: 'year_id requis' });
-    const periods = await PayrollPeriod.generateForYear(year_id);
+    
+    const Year = require('../models/Year');
+    const year = await Year.findById(year_id);
+    if (!year) return res.status(404).json({ message: 'Année non trouvée' });
+    
+    const periods = [];
+    for (let month = 1; month <= 12; month++) {
+      const existing = await PayrollPeriod.findOne({ year_id, month });
+      if (!existing) {
+        const period = new PayrollPeriod({ year_id, month });
+        await period.save();
+        periods.push(period);
+      }
+    }
+    
     res.status(201).json({ message: `${periods.length} périodes créées`, periods });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -102,7 +121,9 @@ exports.generatePeriods = async (req, res) => {
 
 exports.getAllPayrolls = async (req, res) => {
   try {
-    const payrolls = await AdminPayroll.findAll();
+    const payrolls = await AdminPayroll.find()
+      .populate('user_id', 'email nom_complet')
+      .populate({ path: 'payroll_period_id', populate: { path: 'year_id', select: 'label' } });
     res.json(payrolls);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -121,7 +142,7 @@ exports.getPayrollById = async (req, res) => {
 
 exports.getPayrollsByUser = async (req, res) => {
   try {
-    const payrolls = await AdminPayroll.findByUser(req.params.userId);
+    const payrolls = await AdminPayroll.find({ user_id: req.params.userId });
     res.json(payrolls);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -130,7 +151,7 @@ exports.getPayrollsByUser = async (req, res) => {
 
 exports.getPayrollsByPeriod = async (req, res) => {
   try {
-    const payrolls = await AdminPayroll.findByPeriod(req.params.periodId);
+    const payrolls = await AdminPayroll.find({ payroll_period_id: req.params.periodId });
     res.json(payrolls);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -141,11 +162,30 @@ exports.generatePayroll = async (req, res) => {
   try {
     const { period_id } = req.body;
     if (!period_id) return res.status(400).json({ message: 'period_id requis' });
-    const payrolls = await AdminPayroll.generateForPeriod(period_id);
-    res.status(201).json({
-      message: `${payrolls.length} bulletins générés`,
-      payrolls
-    });
+    
+    const period = await PayrollPeriod.findById(period_id);
+    if (!period) return res.status(404).json({ message: 'Période non trouvée' });
+    
+    const contracts = await AdminContract.find({ year_id: period.year_id, status: 'actif' });
+    const payrolls = [];
+    
+    for (const contract of contracts) {
+      const existing = await AdminPayroll.findOne({ user_id: contract.user_id, payroll_period_id: period_id });
+      if (existing) continue;
+      
+      const payroll = new AdminPayroll({
+        user_id: contract.user_id,
+        contract_id: contract._id,
+        payroll_period_id: period_id,
+        gross_salary: contract.base_salary,
+        net_salary: contract.base_salary,
+        status: 'en_attente'
+      });
+      await payroll.save();
+      payrolls.push(payroll);
+    }
+    
+    res.status(201).json({ message: `${payrolls.length} bulletins générés`, payrolls });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -153,8 +193,11 @@ exports.generatePayroll = async (req, res) => {
 
 exports.markAsPaid = async (req, res) => {
   try {
-    const { payment_date } = req.body;
-    const payroll = await AdminPayroll.markPaid(req.params.id, payment_date);
+    const payroll = await AdminPayroll.findByIdAndUpdate(
+      req.params.id,
+      { status: 'payé', payment_date: req.body.payment_date || new Date() },
+      { new: true }
+    );
     if (!payroll) return res.status(404).json({ message: 'Bulletin non trouvé' });
     res.json(payroll);
   } catch (err) {
@@ -164,9 +207,9 @@ exports.markAsPaid = async (req, res) => {
 
 exports.updatePayroll = async (req, res) => {
   try {
-    const updated = await AdminPayroll.update(req.params.id, req.body);
-    if (!updated) return res.status(404).json({ message: 'Bulletin non trouvé' });
-    res.json(updated);
+    const payroll = await AdminPayroll.findByIdAndUpdate(req.params.id, req.body, { new: true });
+    if (!payroll) return res.status(404).json({ message: 'Bulletin non trouvé' });
+    res.json(payroll);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
@@ -174,8 +217,8 @@ exports.updatePayroll = async (req, res) => {
 
 exports.deletePayroll = async (req, res) => {
   try {
-    const deleted = await AdminPayroll.delete(req.params.id);
-    if (!deleted) return res.status(404).json({ message: 'Bulletin non trouvé' });
+    const payroll = await AdminPayroll.findByIdAndDelete(req.params.id);
+    if (!payroll) return res.status(404).json({ message: 'Bulletin non trouvé' });
     res.json({ message: 'Bulletin supprimé' });
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -186,8 +229,7 @@ exports.deletePayroll = async (req, res) => {
 
 exports.getMyPayrolls = async (req, res) => {
   try {
-    // req.user.id vient du middleware JWT
-    const payrolls = await AdminPayroll.findByUser(req.user.id);
+    const payrolls = await AdminPayroll.find({ user_id: req.user.id });
     res.json(payrolls);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -196,15 +238,9 @@ exports.getMyPayrolls = async (req, res) => {
 
 exports.getMyCurrentContract = async (req, res) => {
   try {
-    const { rows } = await pool.query(`
-      SELECT ac.*, y.label as year_label
-      FROM admin_contracts ac
-      JOIN years y ON ac.year_id = y.id
-      WHERE ac.user_id = $1 AND ac.status = 'actif'
-      ORDER BY y.start_date DESC
-      LIMIT 1
-    `, [req.user.id]);
-    res.json(rows[0] || null);
+    const contract = await AdminContract.findOne({ user_id: req.user.id, status: 'actif' })
+      .populate('year_id', 'label');
+    res.json(contract || null);
   } catch (err) {
     res.status(500).json({ message: err.message });
   }
